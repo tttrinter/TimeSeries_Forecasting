@@ -1,4 +1,4 @@
-# TimeSeries_Forecasting
+# TimeSeries Forecasting
 While working as a Data Science consultant, our company was engaged to review the sales forecasting methodology, bring efficiency to the current processes, and make the forecasts more data driven. This was for a Fortune 500 financial company. I led the project and worked with the client treasury and technology teams to:
 1. Map the current process(es)
 2. Identify areas for improvement
