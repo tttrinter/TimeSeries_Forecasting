@@ -1,0 +1,164 @@
+---
+title: "ARIMA Revenue Forecasting"
+author: "Tom Trinter"
+date: "December 9, 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(gridExtra)
+library(scales)
+library(xlsx)
+library(data.table)
+library(fpp2)
+library(fUnitRoots)
+library(dplyr)
+
+```
+
+# Revenue Forecasting - ARIMA Modeling
+
+## Objective
+The objective of this is to model product revenues to better inform their forecasting process. This is derived from a Fortune 500 client project where we had three years of monthly actual revenue data across 45 different products. These produts are grouped into 6 product groups. The data has been sanitized and product names genericized to protect the proprietary nature of the data and client privacy.
+
+We'll begin by modeling the revenues at the product-group level using simple ARIMA models. We'll then look at modeling at the individual product level. 
+
+## Data
+
+For this analysis, we're starting with a spreadsheet where the data was maintained manually for years in the treasury department. I'll convert the data from its 'wide' form into 'long' for easier use going forward.
+
+#### Documentation
+
+This approach follows the example found [here](https://datascienceplus.com/time-series-analysis-using-arima-model-in-r/).
+
+```{r data}
+working.dir <- '/Users/tttri/git_repo/RevenueForecasting/'
+setwd(working.dir)
+
+long.filename <- 'Revenue Data - Long.xlsx'
+pd <- read.xlsx(long.filename, sheetName = 'forecast_data')
+
+# Reduce to actuals only (forecast_id=0)
+pd <- pd %>% 
+  subset(forecast_id==0 & month_start>='2017-04-01') %>% 
+  mutate(value_m = value/1000000)
+
+```
+
+## Plot Product Groups
+
+```{r Product_Groups}
+
+# Let's plot each product_group vs. time
+plot.data <- pd %>%
+  select(summary_display, month_start, value_m) %>% 
+  group_by(summary_display, month_start) %>%
+  summarize(group_value = sum(value_m,na.rm=T)) %>% 
+  filter(!is.na(summary_display) & month_start < '2019-07-01')
+
+p <- 
+  ggplot(plot.data,
+         aes(x=month_start, y=group_value)) + 
+  geom_line() + 
+  geom_point() +
+  geom_smooth(se=F)+
+  labs(x="Month",
+       y="Value ($MM)",
+       title="Monthly Revenue")+
+  theme_bw() + 
+  facet_wrap(~summary_display, scales="free") 
+p
+```
+
+## ARIMA Modeling
+
+Looking at the time-series plots of grouped product revenues, there seem to be some potential trends to extract before we can use an ARIMA model. Let's take a closer look at the Annuity data and add in a 1st difference to see if that will get closer to stationary.
+
+```{r Brass_Data}
+brass.data <- pd %>%
+  filter(summary_display=='Brass' & month_start < '2022-06-01' ) %>% 
+  group_by(month_start) %>%
+  summarize(group_value = sum(value_m,na.rm=T)) %>% 
+  select(month_start, group_value)
+
+ts.data <- ts(brass.data$group_value, frequency=12)
+
+ggtsdisplay(ts.data, main="Brass Revenue")
+
+```
+
+## Components
+
+```{r Components}
+# components.ts <- decompose(ts.data)
+components.ts <- stl(ts.data, s.window=12)
+plot(components.ts)
+
+```
+
+## Adjust for seasonality
+
+From the decomposition plot above, it looks like there is some quarterly seasonality as well as an overall decreasing trend. 
+
+So - we can remove both of those and fit a regression to them separately? For now, just removing the trend...
+```{r}
+ts.data.adj <- ts.data - components.ts$time.series[,2]
+```
+
+## Unit Root Test:
+
+```{r unitRoots}
+urkpssTest(ts.data.adj, type=c("tau"), lags = c("short"), use.lag=NULL, doplot=TRUE)
+
+tsstationary <- diff(ts.data.adj, differences=1)
+plot(tsstationary)
+
+```
+
+```{r Arima}
+fit <- auto.arima(ts.data.adj, trace = TRUE)
+
+```
+```{r}
+checkresiduals(fit)
+```
+
+```{r}
+brass.forecast <- forecast(fit)
+autoplot(brass.forecast)
+```
+
+## Model the trend component
+[Example LM](https://datascienceplus.com/fitting-polynomial-regression-r/)
+```{r}
+ trend.data <- data.frame('days' = brass.data$month_start-brass.data$month_start[1],
+                         trend_val = components.ts$time.series[,2] ) %>% 
+  mutate(days = as.numeric(days))
+
+simple.fit <- lm(trend_val ~ poly(days, 4), data= trend.data)
+
+summary(simple.fit)
+
+trend.data$predicted <- simple.fit$fitted.values
+
+ggplot(trend.data, aes(days, y = trend_val, color = variable)) + 
+    geom_line(aes(y = trend_val, col = "Actual"), size=1) + 
+    geom_line(aes(y = predicted, col = "Predicted"), size=1)
+
+```
+
+## Final Forecast
+
+```{r}
+brass.data$predicted <-simple.fit$fitted.values + brass.forecast$model$fitted
+
+ggplot(brass.data, aes(month_start, y = group_value, color = variable)) + 
+    geom_line(aes(y = group_value, col = "Actual"), size=1) + 
+    geom_line(aes(y = predicted, col = "Predicted"), size=1)
+
+```
