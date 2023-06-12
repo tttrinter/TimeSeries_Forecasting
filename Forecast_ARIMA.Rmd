@@ -2,13 +2,14 @@
 title: "ARIMA Revenue Forecasting"
 author: "Tom Trinter"
 date: "December 9, 2019"
-output:
-  word_document: default
-  html_document: default
+# output:
+  # word_document: default
+  # html_document: default
+output: rmarkdown::github_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 
 library(ggplot2)
 library(gridExtra)
@@ -75,6 +76,8 @@ p <-
 p
 ```
 
+Reviewing these plots to ensure that the transformations of the data to remove any client reference resulted in usable data for the remainder of the analysis. I'm looking for reasonably smooth values and generally consistent order of magnitude.
+
 ## ARIMA Modeling
 
 Looking at the time-series plots of grouped product revenues, there seem to be some potential trends to extract before we can use an ARIMA model. Let's take a closer look at the Annuity data and add in a 1st difference to see if that will get closer to stationary.
@@ -91,6 +94,8 @@ ts.data <- ts(brass.data$group_value, frequency=12)
 ggtsdisplay(ts.data, main="Brass Revenue")
 
 ```
+
+Here I'm looking to see if the data is stationary. Since the bars in ACF and PACF don't cross the blue threshhold lines, I think we're OK. Also, using the auto.arima method, the models are auto-fit to different values of autocorrelation, so it should be handled there as well.
 
 ## Components
 
@@ -111,7 +116,7 @@ ts.data.adj <- ts.data - components.ts$time.series[,2]
 ```
 
 ## Unit Root Test:
-
+After removing the trend component of the time series, let's check if the time series is stationary again:
 ```{r unitRoots}
 urkpssTest(ts.data.adj, type=c("tau"), lags = c("short"), use.lag=NULL, doplot=TRUE)
 
@@ -120,14 +125,19 @@ plot(tsstationary)
 
 ```
 
+Since it is centered around zero, we can move on to modeling the remaining timeseries. I'll use `auto.arima` to fit a range of models to the data, exploring different values for auto-regression and differencing.
+
 ```{r Arima}
 fit <- auto.arima(ts.data.adj, trace = TRUE)
 
 ```
+
+Checking the residuals from the final ARIMA model - we're looking for residuals centered around zero and a normally shaped distribution.
 ```{r}
 checkresiduals(fit)
 ```
-
+## Create a Product Group Time-series Foreacast
+Now that we have the time-series fit to an ARIMA model, we can forecast forward for this product group.
 ```{r}
 brass.forecast <- forecast(fit)
 autoplot(brass.forecast)
@@ -153,7 +163,7 @@ ggplot(trend.data, aes(days, y = trend_val, color = variable)) +
 ```
 
 ## Final Forecast
-
+The final forecast is the combination of the forecasted time-series and the forecasted trend. I'll plot the actuals vs. forecasted to get an idea of overall model fit.
 ```{r}
 brass.data$predicted <-simple.fit$fitted.values + brass.forecast$model$fitted
 
@@ -162,3 +172,6 @@ ggplot(brass.data, aes(month_start, y = group_value, color = variable)) +
     geom_line(aes(y = predicted, col = "Predicted"), size=1)
 
 ```
+
+## Next Steps
+Now that I've worked through one product group, there is more to be done. Specifically, looking at individual product level forecasts, and evaluating the model on test data that is outside of the data range used to fit the models.
